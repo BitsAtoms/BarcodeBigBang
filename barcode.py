@@ -19,7 +19,7 @@ RELATIVE_XML_PATH = os.path.join("admira", "conditions", "biomax.xml")
 
 # Si sabes el puerto, ponlo aquí (por ejemplo "COM7").
 # Si lo dejas en None, el script intenta autodetectarlo.
-SERIAL_PORT = None  # Ej: "COM7"
+SERIAL_PORT = None # Ej: "COM7"
 
 # Parámetros típicos (ajusta si tu escáner usa otros)
 BAUDRATE = 9600
@@ -90,17 +90,27 @@ def _read_xml_sanitized_bytes(xml_path: str) -> bytes:
 
 def update_xml(xml_path: str, new_value_text: str, new_tstamp: str):
     xml_bytes = _read_xml_sanitized_bytes(xml_path)
-    root = ET.fromstring(xml_bytes)
+    root = ET.fromstring(xml_bytes)      # root = <conditions>
     tree = ET.ElementTree(root)
 
-    root.set("tstamp", new_tstamp)
+    # Buscar el condition correcto (id="4"). Si no existe, usa el primero.
+    condition = root.find(".//condition[@id='4']")
+    if condition is None:
+        condition = root.find(".//condition")
+    if condition is None:
+        raise RuntimeError("No se encontró ningún nodo <condition> en biomax.xml")
 
-    value_elem = root.find("value")
+    # Actualizar tstamp en <condition>
+    condition.set("tstamp", new_tstamp)
+
+    # Actualizar <value> dentro de <condition>
+    value_elem = condition.find("value")
     if value_elem is None:
-        raise RuntimeError("No se encontró el nodo <value> en biomax.xml")
+        raise RuntimeError("No se encontró el nodo <value> dentro de <condition> en biomax.xml")
     value_elem.text = new_value_text
 
     tree.write(xml_path, encoding="UTF-8", xml_declaration=True)
+
 
 
 def unix_ts_seconds() -> str:
@@ -152,62 +162,94 @@ def clean_scanned_line(line: str) -> str:
 
 
 def main():
+    print("=== INICIO BARCODE DEBUG ===")
+
     if not os.path.isfile(MAPPING_JSON_PATH):
         raise FileNotFoundError(f"No existe JSON: {MAPPING_JSON_PATH}")
+
+    print(f"JSON encontrado en: {MAPPING_JSON_PATH}")
 
     xml_path = find_biomax_xml()
     if not xml_path:
         raise FileNotFoundError("No se encontró biomax.xml en \\admira\\conditions\\ en ninguna unidad.")
 
+    print(f"XML encontrado en: {xml_path}")
+
     port = SERIAL_PORT or autodetect_serial_port()
+    print(f"Puerto serie seleccionado: {port}")
+    print(f"Baudrate: {BAUDRATE}, Bytesize: {BYTESIZE}, Parity: {PARITY}, Stopbits: {STOPBITS}")
 
     # Abrir serie
     ser = open_serial(port)
+    print("Puerto abierto correctamente.")
 
     # Opcional: limpiar buffers
     try:
         ser.reset_input_buffer()
         ser.reset_output_buffer()
+        print("Buffers limpiados.")
     except Exception:
         pass
+
+    print("Esperando datos del escáner...\n")
 
     # Loop principal: leer códigos
     while True:
         try:
             raw = ser.readline()  # lee hasta \n o timeout
+
             if not raw:
                 continue
 
+            # print(f"[RAW BYTES] {raw}")
+
             try:
                 line = raw.decode("utf-8", errors="ignore")
-            except Exception:
+            except Exception as e:
+                print(f"Error decodificando: {e}")
                 continue
+
+            # print(f"[DECODED] '{line}'")
 
             code = clean_scanned_line(line)
+            print(f"[CLEAN CODE] '{code}'")
+
             if not code:
+                print("Código vacío después de limpiar.")
                 continue
 
-            mapping = load_mapping()  # recargar por si editas el JSON sin reiniciar
+            mapping = load_mapping()
+
             if code not in mapping:
+                print(f"Código '{code}' NO encontrado en JSON.")
                 continue
 
             value = mapping[code]
-            update_xml(xml_path, value, unix_ts_seconds())
+            print(f"Código válido. Valor asociado: {value}")
 
-        except serial.SerialException:
-            # Si se desconecta/reconecta el escáner, reintentar
+            update_xml(xml_path, value, unix_ts_seconds())
+            print("XML actualizado correctamente.\n")
+
+        except serial.SerialException as e:
+            print(f"Error serial: {e}")
             try:
                 ser.close()
             except Exception:
                 pass
+
             time.sleep(1.0)
 
-            # Re-detectar y reabrir
+            print("Reintentando conexión al puerto...")
             port = SERIAL_PORT or autodetect_serial_port()
             ser = open_serial(port)
+            print("Puerto reabierto.")
 
-        except Exception:
-            # Sin logs (como pediste): ignora errores puntuales y sigue
+        except KeyboardInterrupt:
+            print("\nPrograma detenido manualmente.")
+            break
+
+        except Exception as e:
+            print(f"Error inesperado: {e}")
             time.sleep(0.2)
 
 
