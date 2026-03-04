@@ -19,7 +19,7 @@ RELATIVE_XML_PATH = os.path.join("admira", "conditions", "biomax.xml")
 
 # Si sabes el puerto, ponlo aquí (por ejemplo "COM7").
 # Si lo dejas en None, el script intenta autodetectarlo.
-SERIAL_PORT = None # Ej: "COM7"
+SERIAL_PORT = None 
 
 # Parámetros típicos (ajusta si tu escáner usa otros)
 BAUDRATE = 9600
@@ -120,30 +120,29 @@ def unix_ts_seconds() -> str:
 # -----------------------------
 # Serial: autodetección del puerto
 # -----------------------------
-def autodetect_serial_port() -> str:
-    """
-    Intenta elegir un puerto USB-Serial.
-    Prioriza puertos cuyo descriptor/hwid sugiera USB/Serial.
-    """
+# Para encontrar el VID/PID de tu escáner:
+# 1) Conecta el escáner a tu PC.
+# 2) Ejecuta este código (puedes usar detectaCom.py):
+
+TARGET_VID = 9969   # <-- PON TU VID EN HEX
+TARGET_PID = 34818   # <-- PON TU PID EN HEX
+
+
+def autodetect_serial_port():
     ports = list(list_ports.comports())
+
     if not ports:
-        raise RuntimeError("No se encontraron puertos COM. ¿Está conectado el escáner en modo USB-COM?")
+        raise RuntimeError("No se encontraron puertos COM.")
 
-    # Primero, candidatos con pinta de USB serial
-    preferred = []
-    others = []
     for p in ports:
-        desc = (p.description or "").lower()
-        hwid = (p.hwid or "").lower()
+        if p.vid is None or p.pid is None:
+            continue
 
-        if ("usb" in desc) or ("usb" in hwid) or ("serial" in desc) or ("ch340" in desc) or ("cp210" in desc) or ("ftdi" in desc):
-            preferred.append(p)
-        else:
-            others.append(p)
+        if p.vid == TARGET_VID and p.pid == TARGET_PID:
+            print(f"Dispositivo correcto encontrado en {p.device}")
+            return p.device
 
-    chosen = (preferred[0] if preferred else ports[0])
-    return chosen.device
-
+    raise RuntimeError("No se encontró el scanner con VID/PID esperado.")
 
 def open_serial(port_name: str) -> serial.Serial:
     return serial.Serial(
